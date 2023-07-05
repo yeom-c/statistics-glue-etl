@@ -13,10 +13,10 @@ from botocore.exceptions import ClientError
 from datetime import datetime, timedelta
 
 # Get Glue context and parameters
-glueContext = GlueContext(SparkContext.getOrCreate())
+glue_context = GlueContext(SparkContext.getOrCreate())
 args = getResolvedOptions(sys.argv, ['JOB_NAME', 'TempDir'])
 
-job = Job(glueContext)
+job = Job(glue_context)
 job.init(args['JOB_NAME'], args)
 
 secret_name = "sis/stg/redshift"
@@ -46,28 +46,26 @@ else:
 	secret = json.loads(base64.b64decode(get_secret_value_response['SecretBinary']))
 
 # Define tables
-login_table_dyf = glueContext.create_dynamic_frame.from_catalog(
+login_table_dyf = glue_context.create_dynamic_frame.from_catalog(
     database = glue_db, 
     table_name = glue_login_table,
     redshift_tmp_dir = args["TempDir"],
     transformation_ctx = "login_table_dyf"
 )
-register_table_dyf = glueContext.create_dynamic_frame.from_catalog(
+register_table_dyf = glue_context.create_dynamic_frame.from_catalog(
     database = glue_db,
     table_name = glue_register_table,
     redshift_tmp_dir = args["TempDir"],
     transformation_ctx = "register_table_dyf"
 )
 register_table_df = register_table_dyf.toDF().withColumnRenamed("created_dt", "created_dt_2")
-log_cnt = login_table_dyf.count()
-print("\nOriginal Count : ", log_cnt, "\n")
 
 # Define target date and filter source data
-strdDate = (datetime.now() - timedelta(1)).date()
-print("\nTarget Date : ", strdDate, "(UTC)\n")
+start_date = (datetime.now() - timedelta(1)).date()
+print("\nTarget Date : ", start_date, "(UTC)\n")
 mapped_source_dyf = login_table_dyf.map(f=lambda x: {"id": x["id"], "item_id": x["item_id"], "env_code": x["env_code"], "game_id": x["game_id"], "os_code": x["os_code"], "uid": x["uid"], "created_dt": x["created_dt"].date()})
-mapped_source_dyf = mapped_source_dyf.filter(f=lambda x: x["created_dt"] == strdDate)
-#mapped_source_dyf = mapped_source_dyf.filter(f=lambda x: x["created_dt"] in [strdDate])
+mapped_source_dyf = mapped_source_dyf.filter(f=lambda x: x["created_dt"] == start_date)
+#mapped_source_dyf = mapped_source_dyf.filter(f=lambda x: x["created_dt"] in [start_date])
 mapped_source_df = mapped_source_dyf.toDF()
 
 target_cnt = mapped_source_dyf.count()
@@ -92,10 +90,10 @@ if target_cnt > 0:
         agg(countDistinct(col("uid")).alias("login_count")).\
         withColumnRenamed("created_dt", "login_date")
     # Convert back to dynamic frame and write to destination
-    output_dyf = DynamicFrame.fromDF(grouped_df, glueContext, "output_dyf")
+    output_dyf = DynamicFrame.fromDF(grouped_df, glue_context, "output_dyf")
     print("\nOutPut Table: \n")
     output_dyf.toDF().show()
     # drop_null_fields = DropNullFields.apply(frame=output_dyf, transformation_ctx="dropnullfields")
-    glueContext.write_dynamic_frame.from_options(frame=output_dyf, connection_type="redshift", connection_options=target_table_options)
+    glue_context.write_dynamic_frame.from_options(frame=output_dyf, connection_type="redshift", connection_options=target_table_options)
 
 job.commit()
